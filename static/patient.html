@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Для пациента — ОнкоАссистент</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-50 min-h-screen">
+
+  <div class="max-w-3xl mx-auto p-6 pt-12">
+    <div class="text-center mb-10">
+      <h1 class="text-5xl font-bold text-indigo-700">Здравствуйте 👋</h1>
+      <p class="text-2xl text-gray-600 mt-3">Давайте разберём ваш план лечения простыми словами</p>
+    </div>
+
+    <div id="uploadArea" class="bg-white rounded-3xl shadow-xl p-12 text-center border-2 border-dashed border-indigo-200 hover:border-indigo-400 transition cursor-pointer">
+      <input type="file" id="fileInput" class="hidden">
+      <div class="text-7xl mb-6">📋</div>
+      <p class="text-2xl font-medium">Загрузите файл с планом лечения</p>
+      <button onclick="document.getElementById('fileInput').click()" 
+              class="mt-8 px-10 py-4 bg-indigo-600 text-white text-xl rounded-3xl hover:bg-indigo-700">
+        Выбрать файл
+      </button>
+    </div>
+
+    <div id="loading" class="hidden text-center py-20">
+      <div class="animate-spin w-16 h-16 border-4 border-indigo-600 border-t-transparent rounded-full mx-auto"></div>
+      <p class="mt-8 text-2xl text-gray-600">Анализируем ваш план...</p>
+    </div>
+
+    <div id="result" class="hidden space-y-10">
+      <div class="bg-white rounded-3xl shadow-xl p-10">
+        <h2 class="text-3xl font-semibold text-emerald-700 flex items-center gap-3">
+          <span>📘</span> Что это значит простыми словами
+        </h2>
+        <div id="simpleExplanation" class="mt-6 text-xl text-gray-700 leading-relaxed"></div>
+      </div>
+
+      <div id="doctorBlock" class="bg-white rounded-3xl shadow-xl p-10 hidden">
+        <h2 class="text-3xl font-semibold text-amber-700 flex items-center gap-3">
+          <span>❓</span> Что обязательно уточнить у врача
+        </h2>
+        <div id="questionsList" class="mt-8 space-y-6"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    const loading = document.getElementById('loading');
+    const resultDiv = document.getElementById('result');
+
+    fileInput.addEventListener('change', e => {
+      if (e.target.files[0]) handleFile(e.target.files[0]);
+    });
+
+    uploadArea.addEventListener('dragover', e => { 
+      e.preventDefault(); 
+      uploadArea.style.borderColor = '#4f46e5'; 
+    });
+    uploadArea.addEventListener('dragleave', () => uploadArea.style.borderColor = '#6366f1');
+    uploadArea.addEventListener('drop', e => {
+      e.preventDefault();
+      uploadArea.style.borderColor = '#6366f1';
+      if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+    });
+
+    async function handleFile(file) {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('mode', 'patient');
+
+      uploadArea.classList.add('hidden');
+      loading.classList.remove('hidden');
+
+      try {
+        const res = await fetch('/analyze-file', { method: 'POST', body: formData });
+        if (!res.ok) throw new Error(`Ошибка сервера: ${res.status}`);
+
+        const backendData = await res.json();
+        console.log('Ответ от сервера:', backendData);
+
+        // Самое важное: распарсим строку, которая лежит в .analysis
+        let analysis = {};
+
+        if (backendData.analysis) {
+          try {
+            // Убираем лишние переносы строк и пробелы
+            let cleaned = backendData.analysis.trim();
+            // Если начинается и заканчивается кавычками — убираем их
+            cleaned = cleaned.replace(/^["']/, '').replace(/["']$/, '');
+            analysis = JSON.parse(cleaned);
+          } catch (parseErr) {
+            console.error('Не удалось распарсить analysis:', parseErr);
+            analysis = { simple_explanation: "Не удалось обработать ответ. Попробуйте ещё раз." };
+          }
+        } else if (backendData.simple_explanation) {
+          // На случай, если модель вернула чистый объект
+          analysis = backendData;
+        }
+
+        renderPatientView(analysis);
+      } catch (err) {
+        console.error('Ошибка при загрузке:', err);
+        alert('Ошибка: ' + err.message);
+      } finally {
+        loading.classList.add('hidden');
+      }
+    }
+
+    function renderPatientView(data) {
+      resultDiv.classList.remove('hidden');
+
+      // Простыми словами
+      const expl = data.simple_explanation || "Анализ завершён.";
+      document.getElementById('simpleExplanation').innerHTML = expl;
+
+      // Вопросы врачу
+      const qList = document.getElementById('questionsList');
+      const doctorBlock = document.getElementById('doctorBlock');
+      qList.innerHTML = '';
+
+      const questions = data.questions_for_doctor || [];
+
+      if (questions.length > 0) {
+        doctorBlock.classList.remove('hidden');
+        questions.forEach(q => {
+          const div = document.createElement('div');
+          div.className = 'border-l-4 border-amber-500 pl-6 py-3';
+          div.innerHTML = `<p class="text-xl text-gray-800">${q}</p>`;
+          qList.appendChild(div);
+        });
+      } else {
+        doctorBlock.classList.add('hidden');
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ОнкоАссистент — проверка плана лечения</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  <style>
+    .math { font-size: 1.05rem; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div class="max-w-5xl mx-auto p-8">
+    <div class="text-center mb-10">
+      <h1 class="text-4xl font-bold text-indigo-700">ОнкоАссистент</h1>
+      <p class="text-gray-600 mt-2">Проверка плана лечения рака по последним рекомендациям</p>
+    </div>
+
+    <!-- Upload -->
+    <div id="uploadArea" 
+         class="border-4 border-dashed border-indigo-300 rounded-3xl p-12 text-center hover:border-indigo-500 transition cursor-pointer">
+      <input type="file" id="fileInput" accept=".txt,.docx,.pdf" class="hidden">
+      <div class="text-6xl mb-4">📄</div>
+      <p class="text-2xl font-medium text-gray-700">Перетащите файл или нажмите для выбора</p>
+      <p class="text-gray-500 mt-2">История болезни + план лечения (текст)</p>
+      <button onclick="document.getElementById('fileInput').click()" 
+              class="mt-6 px-8 py-3 bg-indigo-600 text-white rounded-2xl hover:bg-indigo-700 font-medium">
+        Выбрать файл
+      </button>
+    </div>
+
+    <!-- Loading -->
+    <div id="loading" class="hidden text-center py-20">
+      <div class="inline-block animate-spin rounded-full h-12 w-12 border-4 border-indigo-600 border-t-transparent"></div>
+      <p class="mt-6 text-xl text-gray-600">Анализируем по актуальным рекомендациям...</p>
+    </div>
+
+    <!-- Result -->
+    <div id="result" class="hidden space-y-10">
+      <!-- Summary -->
+      <div id="summaryCard" class="rounded-3xl p-8 text-center"></div>
+
+      <!-- Sources -->
+      <div class="bg-white rounded-3xl p-8 shadow">
+        <h2 class="text-2xl font-semibold mb-6 text-gray-800">Источники</h2>
+        <div id="sourcesList" class="flex flex-wrap gap-3"></div>
+      </div>
+
+      <!-- Inconsistencies -->
+      <div class="bg-white rounded-3xl p-8 shadow">
+        <h2 class="text-2xl font-semibold mb-6 text-gray-800">Выявленные расхождения</h2>
+        <div id="inconsistenciesList" class="space-y-6"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    const loading = document.getElementById('loading');
+    const resultDiv = document.getElementById('result');
+
+    // Drag & Drop
+    uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('border-indigo-600'); });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('border-indigo-600'));
+    uploadArea.addEventListener('drop', e => {
+      e.preventDefault();
+      uploadArea.classList.remove('border-indigo-600');
+      handleFile(e.dataTransfer.files[0]);
+    });
+
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) handleFile(fileInput.files[0]);
+    });
+
+    async function handleFile(file) {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('mode', 'doctor');
+
+      uploadArea.classList.add('hidden');
+      loading.classList.remove('hidden');
+
+      try {
+        const res = await fetch('/analyze-file', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!res.ok) throw new Error('Ошибка сервера');
+
+        const backendData = await res.json();
+        const analysis = typeof backendData.analysis === 'string' 
+          ? JSON.parse(backendData.analysis) 
+          : backendData.analysis;
+
+        renderResult(analysis);
+      } catch (err) {
+        alert('Ошибка: ' + err.message);
+      } finally {
+        loading.classList.add('hidden');
+      }
+    }
+
+    function renderResult(data) {
+      resultDiv.classList.remove('hidden');
+
+      // Summary
+      const isOk = data.summary.includes('нет');
+      document.getElementById('summaryCard').innerHTML = `
+        <div class="${isOk ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'} rounded-3xl p-10">
+          <div class="text-6xl mb-4">${isOk ? '✅' : '⚠️'}</div>
+          <p class="text-3xl font-semibold">${data.summary}</p>
+        </div>
+      `;
+
+      // Sources
+      const sourcesHTML = data.additional_sources.map(url => `
+        <a href="${url}" target="_blank" 
+           class="inline-block bg-white border border-gray-200 hover:border-indigo-500 px-5 py-3 rounded-2xl text-sm text-indigo-700 transition">
+          ${url.replace('https://', '')}
+        </a>
+      `).join('');
+      document.getElementById('sourcesList').innerHTML = sourcesHTML || '<p class="text-gray-400">Нет дополнительных источников</p>';
+
+      // Inconsistencies
+      const incList = document.getElementById('inconsistenciesList');
+      incList.innerHTML = '';
+      
+      if (data.inconsistencies.length === 0) {
+        incList.innerHTML = `<p class="text-green-600 text-xl">Расхождений не обнаружено ✅</p>`;
+        return;
+      }
+
+      data.inconsistencies.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'border-l-8 border-red-500 bg-red-50 rounded-3xl p-7';
+        card.innerHTML = `
+          <div class="font-semibold text-xl text-gray-800">${item.doc_name[0]}</div>
+          <div class="mt-4 text-gray-700 math">${item.description}</div>
+          <div class="mt-4 text-sm text-gray-500">📍 ${item.page[0]}</div>
+        `;
+        incList.appendChild(card);
+      });
+
+      // Перерендерить LaTeX
+      MathJax.typesetPromise();
+    }
+  </script>
+</body>
+</html>
